@@ -1,0 +1,504 @@
+{
+  "score": 100.0,
+  "passed": 49,
+  "total": 49,
+  "areas": {
+    "bucket": [
+      6,
+      6,
+      3,
+      3
+    ],
+    "cache": [
+      14,
+      14,
+      6,
+      6
+    ],
+    "bus": [
+      10,
+      10,
+      4,
+      4
+    ],
+    "dag": [
+      20,
+      20,
+      7,
+      7
+    ],
+    "retry": [
+      7,
+      7,
+      3,
+      3
+    ],
+    "store": [
+      14,
+      14,
+      4,
+      4
+    ],
+    "serial": [
+      15,
+      15,
+      5,
+      5
+    ],
+    "engine": [
+      45,
+      45,
+      13,
+      13
+    ],
+    "fuzz": [
+      18,
+      18,
+      4,
+      4
+    ]
+  },
+  "results": [
+    {
+      "id": "bucket.fractions",
+      "area": "bucket",
+      "weight": 2,
+      "title": "fractional tokens are accumulated, failed acquire takes nothing",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "bucket.idle",
+      "area": "bucket",
+      "weight": 2,
+      "title": "idle time while full gives no burst credit",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "bucket.time_until",
+      "area": "bucket",
+      "weight": 2,
+      "title": "time_until accounts for the current balance; argument validation",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "cache.ttl_boundary",
+      "area": "cache",
+      "weight": 2,
+      "title": "expiry boundary is inclusive; get does not extend TTL",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "cache.ttl_zero",
+      "area": "cache",
+      "weight": 2,
+      "title": "per-entry ttl=0 expires immediately, ttl=None uses default",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "cache.lru_get",
+      "area": "cache",
+      "weight": 2,
+      "title": "successful get refreshes recency",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "cache.replace",
+      "area": "cache",
+      "weight": 3,
+      "title": "replacing a key refreshes recency and never evicts",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "cache.purge_first",
+      "area": "cache",
+      "weight": 3,
+      "title": "expired entries are dropped before live ones are evicted",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "cache.live_view",
+      "area": "cache",
+      "weight": 2,
+      "title": "len/in/keys ignore expired entries",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "bus.order",
+      "area": "bus",
+      "weight": 2,
+      "title": "priority order; equal priority = subscription order; patterns merged",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "bus.patterns",
+      "area": "bus",
+      "weight": 2,
+      "title": "wildcard semantics",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "bus.mutation",
+      "area": "bus",
+      "weight": 3,
+      "title": "unsubscribe / subscribe during dispatch",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "bus.once_errors",
+      "area": "bus",
+      "weight": 3,
+      "title": "once + re-entrant emit; handler errors are isolated and returned",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "dag.dup_deps",
+      "area": "dag",
+      "weight": 3,
+      "title": "duplicate dependency names are collapsed (nothing silently dropped)",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "dag.self_loop",
+      "area": "dag",
+      "weight": 2,
+      "title": "self-dependency is a cycle",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "dag.tiebreak",
+      "area": "dag",
+      "weight": 3,
+      "title": "ready nodes are taken in insertion order",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "dag.cycle_path",
+      "area": "dag",
+      "weight": 3,
+      "title": "cycle path holds only cycle members; order() refuses cycles",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "dag.deep_chain",
+      "area": "dag",
+      "weight": 4,
+      "title": "20000-node chain: no recursion errors, linear time",
+      "passed": true,
+      "error": null,
+      "seconds": 0.122
+    },
+    {
+      "id": "dag.levels",
+      "area": "dag",
+      "weight": 2,
+      "title": "level = 1 + MAX level of dependencies",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "dag.targets",
+      "area": "dag",
+      "weight": 3,
+      "title": "order(targets) = transitive closure; descendants",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "retry.delay",
+      "area": "retry",
+      "weight": 2,
+      "title": "exponential delay formula with cap",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "retry.overflow",
+      "area": "retry",
+      "weight": 2,
+      "title": "huge attempt numbers do not overflow",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "retry.should_retry",
+      "area": "retry",
+      "weight": 3,
+      "title": "attempt budget, retry_on and no_retry_on precedence",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "store.nesting",
+      "area": "store",
+      "weight": 4,
+      "title": "nested commit merges into parent only; rollback semantics",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "store.delete",
+      "area": "store",
+      "weight": 4,
+      "title": "deletes inside transactions: hidden, restorable, no leaked sentinels",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "store.isolation",
+      "area": "store",
+      "weight": 3,
+      "title": "values are copied in and out",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "store.transaction_cm",
+      "area": "store",
+      "weight": 3,
+      "title": "context manager: commit / rollback on Exception and BaseException",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "ser.roundtrip",
+      "area": "serial",
+      "weight": 3,
+      "title": "tuples/sets survive at any depth, incl. mixed-type sets",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "ser.canonical",
+      "area": "serial",
+      "weight": 3,
+      "title": "canonical output; non-str keys and foreign types raise TypeError",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "ser.migrate_v1",
+      "area": "serial",
+      "weight": 4,
+      "title": "v1 (no version field) migrates through v2 to v3",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "ser.migrate_v2",
+      "area": "serial",
+      "weight": 3,
+      "title": "v2 -> v3: explicit namespaced key wins, meta preserved",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "ser.versions",
+      "area": "serial",
+      "weight": 2,
+      "title": "unsupported versions are rejected with UnsupportedVersion",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.dataflow",
+      "area": "engine",
+      "weight": 3,
+      "title": "diamond dataflow, targets, params, report fields",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.skip_propagation",
+      "area": "engine",
+      "weight": 4,
+      "title": "failures skip dependants transitively, independents still run",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.retry_timing",
+      "area": "engine",
+      "weight": 4,
+      "title": "retry events, backoff timing, no sleep after the final failure",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.store_atomicity",
+      "area": "engine",
+      "weight": 4,
+      "title": "every attempt is a transaction: failures leave no trace",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.timeout",
+      "area": "engine",
+      "weight": 3,
+      "title": "timeout: strictly greater, rolled back, retriable",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.cache_hits",
+      "area": "engine",
+      "weight": 4,
+      "title": "cache: hit/miss, key order independence, only successes cached",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.cache_keys",
+      "area": "engine",
+      "weight": 4,
+      "title": "cache key includes task name and version",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.injected_cache",
+      "area": "engine",
+      "weight": 3,
+      "title": "injected EMPTY cache is used; results are defensively copied; TTL honoured",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.input_isolation",
+      "area": "engine",
+      "weight": 3,
+      "title": "consumers cannot corrupt other consumers or the report",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.cancel",
+      "area": "engine",
+      "weight": 3,
+      "title": "cancel affects the current run only",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.rate_limit",
+      "area": "engine",
+      "weight": 4,
+      "title": "one token per real attempt; cache hits are free",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.fail_fast",
+      "area": "engine",
+      "weight": 4,
+      "title": "invalid graphs fail before anything runs",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "engine.events",
+      "area": "engine",
+      "weight": 2,
+      "title": "event sequence of a mixed run",
+      "passed": true,
+      "error": null,
+      "seconds": 0.0
+    },
+    {
+      "id": "fuzz.cache",
+      "area": "fuzz",
+      "weight": 4,
+      "title": "TTLCache vs naive model, 60 random programs",
+      "passed": true,
+      "error": null,
+      "seconds": 0.011
+    },
+    {
+      "id": "fuzz.store",
+      "area": "fuzz",
+      "weight": 4,
+      "title": "Store vs naive snapshot-stack model, 80 random programs",
+      "passed": true,
+      "error": null,
+      "seconds": 0.079
+    },
+    {
+      "id": "fuzz.dag",
+      "area": "fuzz",
+      "weight": 5,
+      "title": "DAG vs naive model: order, targets, levels, descendants, cycles",
+      "passed": true,
+      "error": null,
+      "seconds": 0.014
+    },
+    {
+      "id": "fuzz.engine",
+      "area": "fuzz",
+      "weight": 5,
+      "title": "Engine vs model: random graphs with random failures, retries and cache",
+      "passed": true,
+      "error": null,
+      "seconds": 0.012
+    }
+  ]
+}

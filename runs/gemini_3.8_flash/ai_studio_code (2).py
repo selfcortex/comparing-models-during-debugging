@@ -85,9 +85,10 @@ class Clock:
     def advance(self, dt):
         if dt < 0:
             raise ValueError("time cannot go backwards")
-        self._now += dt
+        self._now += float(dt)
 
-    sleep = advance
+    def sleep(self, dt):
+        self.advance(dt)
 
 
 # --------------------------------------------------------------------------
@@ -114,13 +115,13 @@ class TokenBucket:
         self.rate = float(refill_rate)
         self.clock = clock
         self._tokens = float(capacity)
-        self._last = clock.now()
+        self._last = float(clock.now())
 
     def _refill(self):
-        now = self.clock.now()
+        now = float(self.clock.now())
         elapsed = now - self._last
-        if elapsed > 0 and self._tokens < self.capacity:
-            self._tokens = min(self.capacity, self._tokens + int(elapsed * self.rate))
+        if elapsed > 0:
+            self._tokens = min(self.capacity, self._tokens + elapsed * self.rate)
             self._last = now
 
     @property
@@ -142,7 +143,7 @@ class TokenBucket:
             raise ValueError("invalid token count")
         self._refill()
         missing = n - self._tokens
-        return 0.0 if missing <= 0 else n / self.rate
+        return 0.0 if missing <= 0 else missing / self.rate
 
 
 # --------------------------------------------------------------------------
@@ -177,11 +178,13 @@ class TTLCache:
 
     def _expired(self, entry):
         exp = entry[1]
-        return exp is not None and self.clock.now() > exp
+        return exp is not None and self.clock.now() >= exp
 
     def _purge(self):
-        for k in [k for k, e in self._data.items() if self._expired(e)]:
-            del self._data[k]
+        now = self.clock.now()
+        expired = [k for k, e in self._data.items() if e[1] is not None and now >= e[1]]
+        for k in expired:
+            self._data.pop(k, None)
 
     def get(self, key, default=None):
         entry = self._data.get(key)
@@ -190,26 +193,42 @@ class TTLCache:
         if self._expired(entry):
             del self._data[key]
             return default
+        self._data.move_to_end(key)
         return entry[0]
 
     def put(self, key, value, ttl=None):
-        ttl = ttl or self.ttl
+        if ttl is None:
+            ttl = self.ttl
         exp = None if ttl is None else self.clock.now() + ttl
         if key in self._data:
             self._data[key] = (value, exp)
+            self._data.move_to_end(key)
             return
+        if len(self._data) >= self.capacity:
+            self._purge()
         while len(self._data) >= self.capacity:
             self._data.popitem(last=False)
         self._data[key] = (value, exp)
 
     def __len__(self):
+        self._purge()
         return len(self._data)
 
     def __contains__(self, key):
-        return key in self._data
+        entry = self._data.get(key)
+        if entry is None:
+            return False
+        if self._expired(entry):
+            del self._data[key]
+            return False
+        return True
 
     def keys(self):
+        self._purge()
         return list(self._data)
+
+    def __iter__(self):
+        return iter(self.keys())
 
 
 # --------------------------------------------------------------------------
@@ -251,21 +270,22 @@ class EventBus:
     """
 
     def __init__(self):
-        self._subs = []
+        self._subs = {}
         self._next = 1
 
-    def subscribe(self, topic, handler, priority=0, once=False):
-        sub = _Sub(self._next, topic, handler, priority, once)
+    def subscribe(self, pattern=None, handler=None, priority=0, once=False, *, topic=None):
+        pat = pattern if pattern is not None else topic
+        token = self._next
         self._next += 1
-        self._subs.append(sub)
-        return sub.token
+        sub = _Sub(token, pat, handler, priority, once)
+        self._subs[token] = sub
+        return token
 
     def unsubscribe(self, token):
-        for s in self._subs:
-            if s.token == token:
-                s.active = False
-                self._subs.remove(s)
-                return True
+        sub = self._subs.pop(token, None)
+        if sub is not None:
+            sub.active = False
+            return True
         return False
 
     @staticmethod
@@ -273,21 +293,22 @@ class EventBus:
         if pattern == "*":
             return True
         if pattern.endswith(".*"):
-            return topic.startswith(pattern[:-2])
+            return topic.startswith(pattern[:-1])
         return pattern == topic
 
     def emit(self, topic, payload=None):
-        matching = [s for s in self._subs if self._matches(s.topic, topic)]
-        matching.sort(key=lambda s: (s.priority, s.token), reverse=True)
+        matching = [s for s in self._subs.values() if self._matches(s.topic, topic)]
+        matching.sort(key=lambda s: (-s.priority, s.token))
         errors = []
         for s in matching:
+            if not s.active:
+                continue
+            if s.once:
+                self.unsubscribe(s.token)
             try:
                 s.handler(topic, payload)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
-            if s.once and s in self._subs:
-                s.active = False
-                self._subs.remove(s)
         return errors
 
 
@@ -324,7 +345,13 @@ class DAG:
     def add(self, node, deps=()):
         if node in self._deps:
             raise DuplicateNodeError(node)
-        self._deps[node] = tuple(d for d in deps if d != node)
+        seen = set()
+        deduped = []
+        for d in deps:
+            if d not in seen:
+                seen.add(d)
+                deduped.append(d)
+        self._deps[node] = tuple(deduped)
         self._index[node] = len(self._index)
 
     def __contains__(self, node):
@@ -344,40 +371,67 @@ class DAG:
             for d in deps:
                 if d not in self._deps:
                     raise MissingDependencyError(node, d)
-        done = set()
-        on_stack = []
 
-        def visit(n):
-            if n in on_stack:
-                raise CycleError(on_stack + [n])
-            if n in done:
-                return
-            on_stack.append(n)
-            for d in self._deps[n]:
-                visit(d)
-            on_stack.pop()
-            done.add(n)
+        white = 0
+        gray = 1
+        black = 2
+        state = {n: white for n in self._deps}
 
-        for n in self._deps:
-            visit(n)
+        for start_node in self._deps:
+            if state[start_node] != white:
+                continue
+            state[start_node] = gray
+            path = [start_node]
+            stack = [(start_node, iter(self._deps[start_node]))]
+
+            while stack:
+                u, it = stack[-1]
+                try:
+                    v = next(it)
+                except StopIteration:
+                    stack.pop()
+                    path.pop()
+                    state[u] = black
+                    continue
+
+                if state[v] == gray:
+                    idx = path.index(v)
+                    cycle = path[idx:] + [v]
+                    raise CycleError(cycle)
+                elif state[v] == white:
+                    state[v] = gray
+                    path.append(v)
+                    stack.append((v, iter(self._deps[v])))
 
     def _closure(self, targets):
         want = set()
+        stack = list(targets)
         for t in targets:
             if t not in self._deps:
                 raise KeyError(t)
-            want.add(t)
-            want.update(self._deps[t])
+        while stack:
+            cur = stack.pop()
+            if cur not in want:
+                want.add(cur)
+                for d in self._deps[cur]:
+                    if d not in want:
+                        stack.append(d)
         return want
 
     def order(self, targets=None):
-        wanted = set(self._deps) if targets is None else self._closure(targets)
+        self.validate()
+        if targets is None:
+            wanted = set(self._deps)
+        else:
+            wanted = self._closure(targets)
+
         indeg = {n: len(self._deps[n]) for n in wanted}
-        rev = {n: set() for n in wanted}
+        rev = {n: [] for n in wanted}
         for n in wanted:
             for d in self._deps[n]:
-                rev[d].add(n)
-        heap = [(n, n) for n in wanted if indeg[n] == 0]
+                rev[d].append(n)
+
+        heap = [(self._index[n], n) for n in wanted if indeg[n] == 0]
         heapq.heapify(heap)
         out = []
         while heap:
@@ -386,17 +440,17 @@ class DAG:
             for m in rev[n]:
                 indeg[m] -= 1
                 if indeg[m] == 0:
-                    heapq.heappush(heap, (m, m))
+                    heapq.heappush(heap, (self._index[m], m))
         return out
 
     def levels(self):
         self.validate()
+        if not self._deps:
+            return []
         level = {}
         for n in self.order():
             ds = self._deps[n]
-            level[n] = 0 if not ds else 1 + min(level[d] for d in ds)
-        if not level:
-            return []
+            level[n] = 0 if not ds else 1 + max(level[d] for d in ds)
         out = [[] for _ in range(max(level.values()) + 1)]
         for n in self._deps:
             out[level[n]].append(n)
@@ -411,14 +465,12 @@ class DAG:
                 if d in rev:
                     rev[d].append(n)
         seen = set()
-
-        def walk(cur):
-            for m in rev[cur]:
-                if m not in seen:
-                    seen.add(m)
-                    walk(m)
-
-        walk(node)
+        stack = list(rev[node])
+        while stack:
+            cur = stack.pop()
+            if cur not in seen:
+                seen.add(cur)
+                stack.extend(rev[cur])
         seen.discard(node)
         return seen
 
@@ -449,13 +501,22 @@ class RetryPolicy:
         self.no_retry_on = tuple(no_retry_on)
 
     def delay(self, attempt):
-        raw = self.base_delay * self.factor ** attempt
-        return min(float(self.max_delay), raw)
+        if attempt <= 1:
+            raw = float(self.base_delay)
+            return min(float(self.max_delay), raw)
+        if self.factor > 1 and attempt > 1024:
+            return float(self.max_delay)
+        try:
+            raw = float(self.base_delay) * (float(self.factor) ** (attempt - 1))
+            return min(float(self.max_delay), float(raw))
+        except OverflowError:
+            return float(self.max_delay)
 
     def should_retry(self, exc, attempt):
         return (
-            attempt <= self.max_attempts
+            attempt < self.max_attempts
             and isinstance(exc, self.retry_on)
+            and not (self.no_retry_on and isinstance(exc, self.no_retry_on))
         )
 
 
@@ -501,13 +562,15 @@ class Store:
 
     def get(self, key, default=None):
         v = self._lookup(key)
-        return default if v is _TOMB else v
+        if v is _TOMB:
+            return copy.deepcopy(default)
+        return copy.deepcopy(v)
 
     def has(self, key):
         return self._lookup(key) is not _TOMB
 
     def set(self, key, value):
-        v = value
+        v = copy.deepcopy(value)
         (self._stack[-1] if self._stack else self._base)[key] = v
 
     def delete(self, key):
@@ -541,8 +604,14 @@ class Store:
         if not self._stack:
             raise TransactionError("no open transaction")
         layer = self._stack.pop()
-        for k, v in layer.items():
-            self._base[k] = v
+        if self._stack:
+            self._stack[-1].update(layer)
+        else:
+            for k, v in layer.items():
+                if v is _TOMB:
+                    self._base.pop(k, None)
+                else:
+                    self._base[k] = v
 
     def rollback(self):
         if not self._stack:
@@ -554,7 +623,7 @@ class Store:
         self.begin()
         try:
             yield self
-        except Exception:
+        except BaseException:
             self.rollback()
             raise
         else:
@@ -571,11 +640,18 @@ def _encode(v):
     if isinstance(v, tuple):
         return {"__tuple__": [_encode(x) for x in v]}
     if isinstance(v, (set, frozenset)):
-        return {"__set__": sorted(_encode(x) for x in v)}
+        items = [_encode(x) for x in v]
+        items.sort(key=lambda x: json.dumps(x, sort_keys=True, separators=(",", ":")))
+        return {"__set__": items}
     if isinstance(v, list):
-        return list(v)
+        return [_encode(x) for x in v]
     if isinstance(v, dict):
-        return {k: _encode(x) for k, x in v.items()}
+        res = {}
+        for k, x in v.items():
+            if not isinstance(k, str):
+                raise TypeError(f"dict keys must be str, got {type(k).__name__}")
+            res[k] = _encode(x)
+        return res
     if v is None or isinstance(v, (bool, int, float, str)):
         return v
     raise TypeError(f"cannot serialize {type(v).__name__}")
@@ -600,15 +676,23 @@ def serialize(data, meta=None):
     must be str - anything else raises TypeError instead of being silently
     coerced; unsupported value types raise TypeError too.  Equal inputs give
     byte-identical output, whatever the insertion order and element types."""
-    doc = {"version": CURRENT_VERSION, "data": _encode(data), "meta": _encode(meta or {})}
+    if meta is None:
+        meta_dict = {}
+    elif isinstance(meta, dict):
+        meta_dict = meta
+    else:
+        raise TypeError(f"meta must be a dict, got {type(meta).__name__}")
+    doc = {"version": CURRENT_VERSION, "data": _encode(data), "meta": _encode(meta_dict)}
     return json.dumps(doc, sort_keys=True, separators=(",", ":"))
 
 
 def _v1_to_v2(doc):
     data = {}
-    for k, v in doc.get("items", []):
-        data[k] = v  # a later duplicate wins
-    return {"version": 2, "data": data, "meta": {"migrated_from": 1}}
+    for item in doc.get("items", []):
+        data[item[0]] = item[1]  # a later duplicate wins
+    meta = dict(doc.get("meta", {}))
+    meta["migrated_from"] = 1
+    return {"version": 2, "data": data, "meta": meta}
 
 
 def _v2_to_v3(doc):
@@ -616,9 +700,14 @@ def _v2_to_v3(doc):
     # "x" and "default/x" exist, the explicit "default/x" wins.
     data = {}
     for k, v in doc["data"].items():
-        data[k if "/" in k else "default/" + k] = v
+        if "/" not in k:
+            data["default/" + k] = v
+    for k, v in doc["data"].items():
+        if "/" in k:
+            data[k] = v
     meta = dict(doc.get("meta", {}))
-    meta["migrated_from"] = doc["version"]
+    if "migrated_from" not in meta:
+        meta["migrated_from"] = doc.get("version", 2)
     return {"version": 3, "data": data, "meta": meta}
 
 
@@ -641,16 +730,21 @@ def deserialize(text):
     doc = json.loads(text)
     if not isinstance(doc, dict):
         raise ValueError("document must be an object")
-    version = doc.get("version", 1)
-    if version > CURRENT_VERSION:
-        raise UnsupportedVersion(version)
-    original = version
+    if "version" in doc:
+        version = doc["version"]
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1 or version > CURRENT_VERSION:
+            raise UnsupportedVersion(version)
+    else:
+        version = 1
+
     if version == 1:
         doc = _MIGRATIONS[1](doc)
+        doc = _MIGRATIONS[2](doc)
     elif version == 2:
         doc = _MIGRATIONS[2](doc)
+
     meta = dict(doc.get("meta", {}))
-    return _decode(doc["data"]), _decode(meta)
+    return _decode(doc.get("data")), _decode(meta)
 
 
 # --------------------------------------------------------------------------
@@ -760,55 +854,85 @@ class Engine:
     def __init__(self, clock=None, bus=None, cache=None, store=None, rate_limiter=None):
         self.clock = clock if clock is not None else Clock()
         self.bus = bus if bus is not None else EventBus()
-        self.cache = cache or TTLCache(1024, None, self.clock)
+        self.cache = cache if cache is not None else TTLCache(1024, None, self.clock)
         self.store = store if store is not None else Store()
         self.rate_limiter = rate_limiter
         self.dag = DAG()
         self._tasks = {}
+        self._running = False
         self._cancel_requested = False
 
     # -- registration ------------------------------------------------------
     def add_task(self, name, func, deps=(), retry=None, timeout=None,
                  cacheable=False, version="1"):
         self.dag.add(name, deps)
-        self._tasks[name] = _Task(name, func, retry if retry is not None else RetryPolicy(max_attempts=1),
-                                  timeout, cacheable, version)
+        self._tasks[name] = _Task(
+            name, func,
+            retry if retry is not None else RetryPolicy(max_attempts=1),
+            timeout, cacheable, version,
+        )
 
     def cancel(self):
-        self._cancel_requested = True
+        if self._running:
+            self._cancel_requested = True
 
     # -- running -----------------------------------------------------------
     def run(self, targets=None, params=None):
         params = {} if params is None else copy.deepcopy(params)
         order = self.dag.order(targets)
         report = RunReport()
-        started = self.clock.now()
-        self.bus.emit("run.started", {"tasks": list(order)})
-        for name in order:
-            report.order.append(name)
-            if self._cancel_requested:
-                report.status[name] = "cancelled"
-                report.attempts[name] = 0
-                self.bus.emit("task.cancelled", {"name": name})
-                continue
-            deps = self.dag.deps(name)
-            blocked = [d for d in deps if report.status[d] == "failed"]
-            if blocked:
-                report.status[name] = "skipped"
-                report.attempts[name] = 0
-                self.bus.emit("task.skipped", {"name": name, "blocked_by": blocked})
-                continue
-            inputs = {d: report.results[d] for d in deps}
-            self._execute(name, inputs, params, report)
-        report.elapsed = self.clock.now() - started
-        self.bus.emit("run.finished", {"ok": report.ok, "elapsed": report.elapsed})
-        return report
+        self._running = True
+        self._cancel_requested = False
+        try:
+            started = self.clock.now()
+            self.bus.emit("run.started", {"tasks": list(order)})
+            for name in order:
+                report.order.append(name)
+                if self._cancel_requested:
+                    report.status[name] = "cancelled"
+                    report.attempts[name] = 0
+                    self.bus.emit("task.cancelled", {"name": name})
+                    continue
+                deps = self.dag.deps(name)
+                blocked = [d for d in deps if report.status.get(d) not in _GOOD]
+                if blocked:
+                    report.status[name] = "skipped"
+                    report.attempts[name] = 0
+                    self.bus.emit("task.skipped", {"name": name, "blocked_by": blocked})
+                    continue
+                inputs = {d: copy.deepcopy(report.results[d]) for d in deps}
+                self._execute(name, inputs, params, report)
+            report.elapsed = self.clock.now() - started
+            self.bus.emit("run.finished", {"ok": report.ok, "elapsed": report.elapsed})
+            return report
+        finally:
+            self._running = False
+            self._cancel_requested = False
+
+    @staticmethod
+    def _canonical(v):
+        if isinstance(v, tuple):
+            return ["__tuple__", [Engine._canonical(x) for x in v]]
+        if isinstance(v, (set, frozenset)):
+            items = [Engine._canonical(x) for x in v]
+            items.sort(key=lambda x: json.dumps(x, sort_keys=True, separators=(",", ":"), default=repr))
+            return ["__set__", items]
+        if isinstance(v, list):
+            return [Engine._canonical(x) for x in v]
+        if isinstance(v, dict):
+            return {str(k): Engine._canonical(x) for k, x in sorted(v.items(), key=lambda it: str(it[0]))}
+        if v is None or isinstance(v, (bool, int, float, str)):
+            return v
+        return repr(v)
 
     def _cache_key(self, task, inputs, params):
-        blob = json.dumps(
-            {"inputs": inputs, "params": params},
-            sort_keys=False, separators=(",", ":"), default=repr,
-        )
+        payload = {
+            "name": str(task.name),
+            "version": str(task.version),
+            "inputs": self._canonical(inputs),
+            "params": self._canonical(params),
+        }
+        blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=repr)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     def _acquire_token(self):
@@ -820,44 +944,70 @@ class Engine:
 
     def _execute(self, name, inputs, params, report):
         task = self._tasks[name]
-        self._acquire_token()
         key = None
         if task.cacheable:
             key = self._cache_key(task, inputs, params)
             hit = self.cache.get(key, _MISSING)
             if hit is not _MISSING:
-                report.results[name] = hit
+                val = copy.deepcopy(hit)
+                report.results[name] = val
                 report.status[name] = "cached"
                 report.attempts[name] = 0
                 self.bus.emit("task.cached", {"name": name})
                 return
+
         attempt = 0
         while True:
             attempt += 1
+            self._acquire_token()
             self.bus.emit("task.started", {"name": name, "attempt": attempt})
             began = self.clock.now()
-            ctx = TaskContext(name, inputs, params, self.store, attempt, self.clock, self)
+            ctx = TaskContext(
+                name,
+                copy.deepcopy(inputs),
+                copy.deepcopy(params),
+                self.store,
+                attempt,
+                self.clock,
+                self,
+            )
+            self.store.begin()
             try:
-                with self.store.transaction():
-                    value = task.func(ctx)
-                if task.timeout is not None and self.clock.now() - began >= task.timeout:
+                value = task.func(ctx)
+                duration = self.clock.now() - began
+                if task.timeout is not None and duration > task.timeout:
                     raise TaskTimeout(f"{name} exceeded {task.timeout}")
-            except Exception as exc:  # noqa: BLE001
-                delay = task.retry.delay(attempt)
-                self.clock.sleep(delay)
+                self.store.commit()
+            except Exception as exc:
+                self.store.rollback()
                 if task.retry.should_retry(exc, attempt):
-                    self.bus.emit("task.retry", {"name": name, "attempt": attempt,
-                                                 "delay": delay, "error": exc})
+                    delay = task.retry.delay(attempt)
+                    self.bus.emit("task.retry", {
+                        "name": name,
+                        "attempt": attempt,
+                        "delay": delay,
+                        "error": exc,
+                    })
+                    self.clock.sleep(delay)
                     continue
                 report.status[name] = "failed"
                 report.errors[name] = exc
                 report.attempts[name] = attempt
-                self.bus.emit("task.failed", {"name": name, "attempt": attempt, "error": exc})
+                self.bus.emit("task.failed", {
+                    "name": name,
+                    "attempt": attempt,
+                    "error": exc,
+                })
                 return
-            report.results[name] = value
+            except BaseException:
+                self.store.rollback()
+                raise
+
+            res = copy.deepcopy(value)
+            report.results[name] = res
             report.status[name] = "ok"
             report.attempts[name] = attempt
             if key is not None:
-                self.cache.put(key, value)
+                self.cache.put(key, copy.deepcopy(value))
             self.bus.emit("task.succeeded", {"name": name, "attempt": attempt})
             return
